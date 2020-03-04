@@ -16,7 +16,7 @@ is identified by a unique hash label.
 """
 
 import json
-import nest
+# import nest
 import numpy as np
 import os
 import pprint
@@ -36,6 +36,10 @@ try:
 except ImportError:
     sumatra_found = False
 
+import pyNN
+if simulator == 'nest' and neuron_model == 'iaf_psc_exp_ps':
+    from pyNN.nest import native_cell_type
+import network_params
 
 class Simulation:
     def __init__(self, network, sim_spec):
@@ -140,50 +144,60 @@ class Simulation:
             shutil.copy2(os.path.join(base_path, f),
                          self.data_dir)
 
-    def prepare(self):
-        """
-        Prepare NEST Kernel.
-        """
-        nest.ResetKernel()
-        master_seed = self.params['master_seed']
-        num_processes = self.params['num_processes']
-        local_num_threads = self.params['local_num_threads']
-        vp = num_processes * local_num_threads
-        nest.SetKernelStatus({'resolution': self.params['dt'],
-                              'total_num_virtual_procs': vp,
-                              'overwrite_files': True,
-                              'data_path': os.path.join(self.data_dir, 'recordings'),
-                              'print_time': False,
-                              'grng_seed': master_seed,
-                              'rng_seeds': list(range(master_seed + 1,
-                                                      master_seed + vp + 1))})
+    # def prepare(self):
+    #     """
+    #     Prepare NEST Kernel.
+    #     """
+    #     nest.ResetKernel()
+    #     master_seed = self.params['master_seed']
+    #     num_processes = self.params['num_processes']
+    #     local_num_threads = self.params['local_num_threads']
+    #     vp = num_processes * local_num_threads
+    #     nest.SetKernelStatus({'resolution': self.params['dt'],
+    #                           'total_num_virtual_procs': vp,
+    #                           'overwrite_files': True,
+    #                           'data_path': os.path.join(self.data_dir, 'recordings'),
+    #                           'print_time': False,
+    #                           'grng_seed': master_seed,
+    #                           'rng_seeds': list(range(master_seed + 1,
+    #                                                   master_seed + vp + 1))})
 
-        nest.SetDefaults(self.network.params['neuron_params']['neuron_model'],
-                         self.network.params['neuron_params']['single_neuron_dict'])
-        self.pyrngs = [np.random.RandomState(s) for s in list(range(
-            master_seed + vp + 1, master_seed + 2 * (vp + 1)))]
+    #     nest.SetDefaults(self.network.params['neuron_params']['neuron_model'],
+    #                      self.network.params['neuron_params']['single_neuron_dict'])
+    #     self.pyrngs = [np.random.RandomState(s) for s in list(range(
+    #         master_seed + vp + 1, master_seed + 2 * (vp + 1)))]
 
-    def create_recording_devices(self):
-        """
-        Create devices for all populations. Depending on the
-        configuration, this will create:
-        - spike detector
-        - voltmeter
-        """
-        self.spike_detector = nest.Create('spike_detector')
-        status_dict = deepcopy(self.params['recording_dict']['spike_dict'])
-        label = '-'.join((self.label,
-                          status_dict['label']))
-        status_dict.update({'label': label})
-        self.spike_detector.set(status_dict)
+    def setup(self):
 
-        if self.params['recording_dict']['record_vm']:
-            self.voltmeter = nest.Create('voltmeter')
-            status_dict = self.params['recording_dict']['vm_dict']
-            label = '-'.join((self.label,
-                              status_dict['label']))
-            status_dict.update({'label': label})
-            self.voltmeter.set(status_dict)
+        self.instance_rng = pyNN.random.NumpyRNG(seed=pyseed, parallel_safe=parallel_safe)
+        # Initial membrane potential distribution
+        self.V_dist = pyNN.random.RandomDistribution(
+            'normal', 
+            [network_params.V0_mean, network_params.V0_sd], 
+            rng=self.instance_rng
+            )
+
+    # def create_recording_devices(self):
+    #     """
+    #     Create devices for all populations. Depending on the
+    #     configuration, this will create:
+    #     - spike detector
+    #     - voltmeter
+    #     """
+    #     self.spike_detector = nest.Create('spike_detector')
+    #     status_dict = deepcopy(self.params['recording_dict']['spike_dict'])
+    #     label = '-'.join((self.label,
+    #                       status_dict['label']))
+    #     status_dict.update({'label': label})
+    #     self.spike_detector.set(status_dict)
+
+    #     if self.params['recording_dict']['record_vm']:
+    #         self.voltmeter = nest.Create('voltmeter')
+    #         status_dict = self.params['recording_dict']['vm_dict']
+    #         label = '-'.join((self.label,
+    #                           status_dict['label']))
+    #         status_dict.update({'label': label})
+    #         self.voltmeter.set(status_dict)
 
     def create_areas(self):
         """
@@ -272,7 +286,7 @@ class Simulation:
                                                             source_area.name,
                                                             cc_input[source_area.name])
 
-    def simulate(self):
+    def simulate(self,sim):
         """
         Create the network and execute simulation.
         Record used memory and wallclock time.
@@ -300,32 +314,31 @@ class Simulation:
 
         self.save_network_gids()
 
-        nest.Simulate(self.T)
+        # nest.Simulate(self.T)
+        if sim.rank() == 0:
+            print "Simulating..."
+        sim.run(self.simulator_params[simulator]['sim_duration'])
+
         t4 = time.time()
         self.time_simulate = t4 - t3
         self.total_memory = self.memory()
         print("Simulated network in {0:.2f} seconds.".format(self.time_simulate))
         self.logging()
 
-    def memory(self):
+    def memory(self,sim):
         """
-        Use NEST's memory wrapper function to record used memory.
+        Determines memory consumption. Only to be executed if simulator == 'nest'.
         """
-        try:
-            mem = nest.ll_api.sli_func('memory_thisjob')
-        except AttributeError:
-            mem = nest.sli_func('memory_thisjob')
-        if isinstance(mem, dict):
-            return mem['heap']
-        else:
-            return mem
+        sim.nest.sli_run("memory_thisjob")
+        print 'memory usage after network creation:', sim.nest.sli_pop(), 'kB'
+        return 0
 
-    def logging(self):
+    def logging(self,sim):
         """
         Write runtime and memory for the first 30 MPI processes
         to file.
         """
-        if nest.Rank() < 30:
+        if sim.rank() < 30:
             d = {'time_prepare': self.time_prepare,
                  'time_network_local': self.time_network_local,
                  'time_network_global': self.time_network_global,
@@ -337,7 +350,7 @@ class Simulation:
                               'recordings',
                               '_'.join((self.label,
                                         'logfile',
-                                        str(nest.Rank()))))
+                                        str(sim.rank()))))
             with open(fn, 'w') as f:
                 json.dump(d, f)
 
@@ -361,7 +374,7 @@ class Simulation:
 
 
 class Area:
-    def __init__(self, simulation, network, name):
+    def __init__(self, simulation, network, name,sim):
         """
         Area class.
         This class encapsulates a single area of the model.
@@ -405,7 +418,7 @@ class Area:
         self.create_populations()
         self.connect_devices()
         self.connect_populations()
-        print("Rank {}: created area {} with {} local nodes".format(nest.Rank(),
+        print("Rank {}: created area {} with {} local nodes".format(sim.rank(),
                                                                     self.name,
                                                                     self.num_local_nodes))
 
@@ -423,34 +436,58 @@ class Area:
         elif isinstance(other, str):
             return self.name == other
 
-    def create_populations(self):
+    def create_populations(self,sim):
         """
         Create all populations of the area.
         """
-        self.gids = {}
-        self.num_local_nodes = 0
-        for pop in self.populations:
-            gid = nest.Create(self.network.params['neuron_params']['neuron_model'],
-                              int(self.neuron_numbers[pop]))
-            mask = create_vector_mask(self.network.structure, areas=[self.name], pops=[pop])
-            I_e = self.network.add_DC_drive[mask][0]
-            if not self.network.params['input_params']['poisson_input']:
-                K_ext = self.external_synapses[pop]
-                W_ext = self.network.W[self.name][pop]['external']['external']
-                tau_syn = self.network.params['neuron_params']['single_neuron_dict']['tau_syn_ex']
-                DC = K_ext * W_ext * tau_syn * 1.e-3 * \
-                    self.network.params['rate_ext']
-                I_e += DC
-            gid.I_e = I_e
+        # self.gids = {}
+        # self.num_local_nodes = 0
+        # for pop in self.populations:
+        #     gid = nest.Create(self.network.params['neuron_params']['neuron_model'],
+        #                       int(self.neuron_numbers[pop]))
+        self.pops = {}
+        global_neuron_id = 1
+        self.base_neuron_ids = {}
+        for layer in sorted(network_params.layers):
+            self.pops[layer] = {}
+            for pop in sorted(network_params.pops):
+                self.pops[layer][pop] = sim.Population(
+                    int(round(network_params.N_full[layer][pop] * network_params.N_scaling)),
+                    network_params.neuron_model, 
+                    cellparams=network_params.neuron_params, 
+                    label=layer+pop
+                    )
+                this_pop = self.pops[layer][pop]
 
-            # Store GIDCollection of each population
-            self.gids[pop] = gid
+                mask = create_vector_mask(self.network.structure, areas=[self.name], pops=[pop])
+                I_e = self.network.add_DC_drive[mask][0]
+                if not self.network.params['input_params']['poisson_input']:
+                    K_ext = self.external_synapses[pop]
+                    W_ext = self.network.W[self.name][pop]['external']['external']
+                    tau_syn = self.network.params['neuron_params']['single_neuron_dict']['tau_syn_ex']
+                    DC = K_ext * W_ext * tau_syn * 1.e-3 * \
+                        self.network.params['rate_ext']
+                    I_e += DC
+                # gid.I_e = I_e
+                if network_params.neuron_model == 'IF_curr_exp':
+                    this_pop.set('i_offset', I_e)
+                if network_params.neuron_model == 'iad_psc_exp_ps':
+                    this_pop.set('I_e', 1e3*I_e)
 
-            # Initialize membrane potentials
-            # This could also be done after creating all areas, which
-            # might yield better performance. Has to be tested.
-            gid.V_m = nest.random.normal(self.network.params['neuron_params']['V0_mean'],
-                                         self.network.params['neuron_params']['V0_sd'])
+                # Store GIDCollection of each population
+                # self.gids[pop] = gid
+                self.base_neuron_ids[this_pop] = global_neuron_id
+                global_neuron_id += len(this_pop) + 2
+
+                # Initialize membrane potentials
+                # This could also be done after creating all areas, which
+                # might yield better performance. Has to be tested.
+                # gid.V_m = nest.random.normal(self.network.params['neuron_params']['V0_mean'],
+                #                          self.network.params['neuron_params']['V0_sd'])
+                if voltage_input_type == 'random':
+                    this_pop.initialize('v', V_dist)
+                elif voltage_input_type == 'from_list':
+                    this_pop.initialize('v', get_init_voltages_from_file(this_pop))
 
     def connect_populations(self):
         """

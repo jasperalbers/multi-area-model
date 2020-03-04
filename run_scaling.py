@@ -19,12 +19,11 @@ theory_params = {'dt': 0.1}
 total_num_vp_per_node = 24
 t_presim = 10.
 t_sim = 10000.
-#nest_dir = '/p/project/cjinb33/albers2/nest/install/bin/nest_vars.sh'
-nest_dir = '/p/project/cjinb33/albers2/nest/nest-simulator/397dbe2/install/bin/nest_vars.sh'
+nest_dir = '/p/project/cjinb33/albers2/nest_jasperalbers/nest-simulator/03e814c/install/bin/nest_vars.sh'
 
 for mpi_proc_per_node in [6]:
-    for num_nodes in [60,100,140]:
-        for master_seed in [0, 17, 666]:
+    for num_nodes in [60]:#,100,140]:
+        for master_seed in [0]:#, 17, 666]:
             local_num_threads = int(total_num_vp_per_node / mpi_proc_per_node)
             num_processes = (num_nodes * mpi_proc_per_node)
 

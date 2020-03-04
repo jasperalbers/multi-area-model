@@ -6,7 +6,7 @@
 # Run this script by providing the correct path to the simulated data, i.e. change data_dir
 # Also: This might take some time, couple of hours? I guess it would be best to run the script inside of a tmux session such that one can disconnect the ssh session and attach to it later when reconnecting.
 
-data_dir=XXX
+data_dir="/p/scratch/cjinb33/albers2/mam_benchmarks/2_20/fig5_params_kernel_status"
 index=0
 total_spikes=0
 total_num_neurons=0
